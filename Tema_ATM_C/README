@@ -1,0 +1,70 @@
+                Tema ATM
+
+- users_data_file: user = <nume> <prenume> <numar_card> <pin> <parola_secreta> <sold>
+
+- comenzi implementate:
+    Client
+    - login <nr_card> <pin>
+    - logout
+    - listsold
+    - getmoney <suma_retragere>
+    - putmoney <suma_depunere>
+    - unlock
+    - quit
+
+    Server
+    - quit
+
+Detalii implementare:
+    - structura user: contine elementele descrise in users_data_file pentru fiecare utilizator, + tries (numarul de incercari de logare, pentru blocare in cazul in care se atinge se incearca de 3 ori consecutiv cu pin gresit), auth (1 daca utilizatorul este autentificat, 0 altfel) si blocked (1 daca s-a blocat cardul, 0 altfel)
+
+    - structura database: contine numarul de utilizatori si un vector de useri ce va fi umplut de catre server cu detaliile din users_data_file
+
+    - structura msg: are 4 campuri
+        - type: desemneaza tipul mesajului (baza comunicarii intre client si server, ajuta apelearea logicii celor 2 entitati in functie de comanda data de utilizator;
+        - payload: client -> server (contine argumentele comenzii date de utilizator (daca acestea exista), comanda in sine e incapsulata in campul type)
+                   server -> client (contine mesajul intors de server dupa procesarea cererii clientului);
+                   client -> client (contine mesajul de eroare ce l-a identificat clientul, fara a mai trimite server-ului mesajul);
+        - ID: identificatorul cardului introdus de utilizator (este acelasi cu indexul userului in DB-ul serverului sau -1 daca nu a fost introdus sau nu exitsa);
+        - msg_len: lungimea mesajului;
+
+    - logica de setare a ID-ului:
+        clientul are o variabila ID si una auth locale (ce reprezinta identificatorul userului in DB si starea acestuia (atentificat/nu)) initial setate la -1 respectiv 0;
+        setarea ID-ului are loc la server (intrucat el are accesul la DB);
+        pana cand utilizatorul nu se autentifica cu numar_card si pin corecte sau nu isi blocheaza cardul cu 3 incercari consecutive esuate, serverul si clientul schimba mesaje cu ID = -1 (echivalent card inexistent);
+        daca se ajunge in una din situatiile de mai sus, ID-ul devine necesar, iar serverul intoarce in functie de numar_card indexul gasit pentru acesta in DB, clientul isi actualizeaza ID-ul local si auth local (in cazul logarii cu succes);
+        pentru cererile ulterioare ale clientului, serverul va sti ce user a apelat serviciile oferite de atm sau serviciul de deblocare;
+        la logout ID si auth sunt resetate;
+
+    - logica functionare client:
+        - multiplexare descriptori stdin, scoket UDP, socket TCP;
+        - pe TCP:
+            daca serverul a trimis un mesaj de tip quit, inseamna ca acesta se pregateste sa se inchida si clientul executa un quit implicit;
+            daca mesajul e de tip login, inseamna ca utilizatorul s-a autentificat cu succes, deci setam ID-ul la cel intors de server si auth 1;
+            daca mesajul e de tip error_5(card blocat), serverul mi-a intors ID-ul pentru a putea cere ulterior deblocarea pe serviciul unlock, asa ca setez ID;
+            daca e de tip logout, resetez ID-ul si auth local;
+            in toate cazurile afisez la consola si scriu in fisier mesajul intors de server;
+        - pe UDP:
+            afisez mesajul primit de la server;
+            daca mesajul e de tip give_pass(serverul a cerut parola) atunci citesc de la tastatura parola si fromez mesajul corespunzator (cu make_UDP_msg implementata in client_side.c) pe care-l trimit server-ului;
+        - de la tastatura:
+            citesc comanda introdusa de utilizator
+            traduc comanda in mesaj cu (get_msg_for_command implementata in client_side.c)
+            daca userul a dat o comanda ce a produs o eroare la client(verificare de client_command_check din client_side.c), afisez eroare si o scriu in logfile si nu trimit mesajul serverului;
+            de asemenea se verifica daca userul a dat comanda unlock(caz in care clientul apeleaza serviciul de deblocare (pe UDP)) sau quit (caz in care se termina executia)
+            daca a trecut de verificarile mentionate mai sus, mesajul se trimite la server pe TCP;
+
+    - logica functionare server:
+        - se initializeaza baza de date(cu init_database din server_side.c);
+        - la multiplexare
+            - de la tastatura:
+                se verifica daca se apelat quit (caz in care se trimite tuturor clientilor un mesaj de quit)
+            - pe socket-ul TCP de ascultare
+                se da accept pentru noua cerere de conectare si se adauga socket-ul activ la multimea descriptorilor de citire
+            - pe UDP:
+                se proceseaza raspunsul cu (get_UDP_response din server_side.c)
+            - pe socketii TCP activi:
+                verificam daca utilizatorul a inchis conexiunea, caz in care stergem socketul activ din multimea read_fds
+                daca nu s-a inchis, proceseaza raspunsul pentru mesajul primit(cu functia get_answer_for_msg din server_side.c) si trimite-l.
+
+        
